@@ -1,0 +1,16 @@
+{{- if and .Values.fluxInstance.enabled .Values.fluxInstance.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.fluxInstance.persistence.claimName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lab-flux-cd.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.fluxInstance.persistence.accessModes | nindent 4 }}
+  storageClassName: {{ .Values.fluxInstance.persistence.storageClassName | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.fluxInstance.persistence.size }}
+{{- end }}

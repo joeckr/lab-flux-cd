@@ -1,0 +1,74 @@
+{{- if .Values.fluxInstance.enabled }}
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: {{ .Values.fluxInstance.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lab-flux-cd.labels" . | nindent 4 }}
+spec:
+  distribution:
+    version: {{ .Values.fluxInstance.distribution.version | quote }}
+    registry: {{ .Values.fluxInstance.distribution.registry | quote }}
+  components:
+    {{- toYaml .Values.fluxInstance.components | nindent 4 }}
+  cluster:
+    type: {{ .Values.fluxInstance.cluster.type }}
+    multitenant: {{ .Values.fluxInstance.cluster.multitenant }}
+    networkPolicy: {{ .Values.fluxInstance.cluster.networkPolicy }}
+  {{- if .Values.fluxInstance.sync.enabled }}
+  sync:
+    kind: {{ .Values.fluxInstance.sync.kind }}
+    url: {{ .Values.fluxInstance.sync.url | quote }}
+    ref: {{ .Values.fluxInstance.sync.ref | quote }}
+    path: {{ .Values.fluxInstance.sync.path | quote }}
+    {{- $pullSecret := .Values.fluxInstance.sync.existingSecret | default .Values.fluxInstance.sync.pullSecret }}
+    {{- if $pullSecret }}
+    pullSecret: {{ $pullSecret | quote }}
+    {{- end }}
+  {{- end }}
+  {{- if or .Values.fluxInstance.tolerations .Values.fluxInstance.persistence.enabled }}
+  kustomize:
+    patches:
+      {{- if .Values.fluxInstance.tolerations }}
+      # Allow Flux controllers to schedule onto control-plane nodes in compact Talos clusters.
+      - target:
+          kind: Deployment
+        patch: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: all
+          spec:
+            template:
+              spec:
+                tolerations:
+                  {{- toYaml .Values.fluxInstance.tolerations | nindent 18 }}
+      {{- end }}
+      {{- if .Values.fluxInstance.persistence.enabled }}
+      # Replace source-controller emptyDir with Longhorn PVC using a strategic merge patch.
+      # Recreate strategy prevents ReadWriteOnce volume attach deadlocks during upgrades.
+      - target:
+          kind: Deployment
+          name: source-controller
+        patch: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: source-controller
+          spec:
+            strategy:
+              type: Recreate
+            template:
+              spec:
+                securityContext:
+                  fsGroup: {{ .Values.fluxInstance.persistence.fsGroup }}
+                  fsGroupChangePolicy: OnRootMismatch
+                volumes:
+                  - name: data
+                    emptyDir: null
+                    persistentVolumeClaim:
+                      claimName: {{ .Values.fluxInstance.persistence.claimName }}
+      {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,19 @@
+Flux CD (Flux Operator v{{ .Chart.AppVersion }}) has been deployed via {{ .Chart.Name }} (v{{ .Chart.Version }}).
+
+1. Verify the `{{ .Release.Namespace }}` namespace enforces `restricted` Pod Security Standards:
+   kubectl get ns {{ .Release.Namespace }} --show-labels
+
+2. Check Flux Operator, FluxInstance, PVC, and HTTPRoute readiness:
+   kubectl -n {{ .Release.Namespace }} get pods,fluxinstance,pvc,httproute
+
+3. External access checklist (https://flux.joeckr.dev):
+   - Cloudflare Tunnel (lab-cloudflare-tunnel): add Public Hostname `flux.joeckr.dev`
+     pointing to your Traefik Gateway service (same target as forgejo/headlamp/zitadel).
+   - Zitadel OIDC (https://zitadel.joeckr.dev): configure a Web (Code) Application with redirect URI:
+       https://flux.joeckr.dev/oauth2/callback
+   - Supply `oidc.clientID` and `oidc.clientSecret` via an untracked `values.local.yaml` or `--set`
+     (or set `oidc.existingSecret` to reference a pre-existing Secret).
+
+4. Local port-forward fallback:
+   mise run ui
+   # Open http://localhost:9080

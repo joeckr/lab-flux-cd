@@ -1,26 +1,72 @@
-app:
-  name: lab-service
-  image: nginxinc/nginx-unprivileged
-  tag: alpine
-  pullPolicy: Always
-  replicaCount: 1
-  port: 8080
-  env: "lab"
-  resources:
-    limits:
-      cpu: 250m
-      memory: 256Mi
-  securityContext:
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: false
-    capabilities:
-      drop:
-        - ALL
-  podSecurityContext:
-    runAsNonRoot: true
-    seccompProfile:
-      type: RuntimeDefault
-    fsGroup: 1031
+# Default values for lab-flux-cd.
+# Wraps the official Flux Operator chart and manages the FluxInstance, Longhorn PVC, Secrets, and RBAC.
+
+# Zitadel OIDC configuration for the Flux Operator Web UI.
+# Do NOT commit secrets to this repository. Supply clientID and clientSecret
+# at install time via --set, an untracked values.local.yaml file, or an existingSecret.
+oidc:
+  enabled: true
+  # Name of a pre-existing Kubernetes Secret containing `config.yaml`.
+  # When set, the chart will not create the Secret resource.
+  existingSecret: ""
+  # Secret name created when existingSecret is empty (must match flux-operator.web.configSecretName).
+  secretName: "flux-web-config"
+  baseURL: "https://flux.joeckr.dev"
+  issuerURL: "https://zitadel.joeckr.dev"
+  # OIDC Client ID and Client Secret from Zitadel (pass via values.local.yaml or --set).
+  clientID: ""
+  clientSecret: ""
+  impersonation:
+    username: "has(claims.email) && claims.email != '' ? claims.email : claims.sub"
+    groups: "claims.groups"
+
+# FluxInstance managed by the Flux Operator.
+fluxInstance:
+  enabled: true
+  name: flux
+
+  distribution:
+    version: "2.x"
+    registry: "ghcr.io/fluxcd"
+
+  components:
+    - source-controller
+    - kustomize-controller
+    - helm-controller
+    - notification-controller
+
+  cluster:
+    type: kubernetes
+    multitenant: false
+    networkPolicy: true
+
+  # Optional GitOps sync configuration pointing at Forgejo.
+  # Enable once your target Forgejo GitOps repo is ready.
+  sync:
+    enabled: false
+    kind: GitRepository
+    url: "https://forgejo.joeckr.dev/joeckr/lab-flux-cd.git"
+    ref: "refs/heads/main"
+    path: "clusters/homelab"
+    # Pre-existing pull Secret name; leave empty to have the chart create `pullSecret` from username/password.
+    existingSecret: ""
+    pullSecret: "forgejo-auth"
+    # Forgejo credentials (pass via values.local.yaml or --set; never commit).
+    username: ""
+    password: ""
+
+  # Persistent Longhorn volume for source-controller artifact storage (replaces emptyDir).
+  persistence:
+    enabled: true
+    claimName: source-controller-data
+    storageClassName: longhorn
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    # source-controller runs as UID/GID 65534 (nobody); fsGroup grants write access on Longhorn ext4.
+    fsGroup: 65534
+
+  # Allow Flux controllers to schedule onto control-plane nodes in compact Talos clusters.
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
@@ -29,15 +75,75 @@ app:
       operator: "Exists"
       effect: "NoSchedule"
 
-service:
-  name: lab-service
-  type: ClusterIP
-  port: 8080
+# ClusterRoleBindings for Flux Web UI OIDC users or groups.
+# Flux Operator Web UI impersonates the raw OIDC email/groups claims (no `oidc:` prefix),
+# so bind your Zitadel user email or group to `flux-web-admin` (or `flux-web-user`).
+rbac:
+  oidcBindings:
+    - name: flux-web-admins
+      clusterRoleName: flux-web-admin
+      subjects:
+        - kind: Group
+          name: "headlamp-admin"
 
-ingress:
-  enabled: true
-  name: lab-ingress
-  host: "test.joeckr.dev" # add your own domain
-  className: "nginx"
-  path: /
-  pathType: "Prefix"
+# Official Flux Operator subchart overrides.
+# Upstream chart reference: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator (v0.63.1)
+flux-operator:
+  fullnameOverride: "flux-operator"
+
+  installCRDs: true
+
+  # Flux Status Web UI exposed at https://flux.joeckr.dev via shared Traefik Gateway + Cloudflare Tunnel.
+  web:
+    enabled: true
+    # Matches oidc.secretName (or oidc.existingSecret).
+    configSecretName: "flux-web-config"
+    networkPolicy:
+      create: true
+    rbac:
+      createRoles: true
+      createAggregation: false
+    # Attach directly to the shared cluster Traefik Gateway (from lab-traefik-kube-gateway).
+    httpRoute:
+      enabled: true
+      annotations: {}
+      parentRefs:
+        - group: gateway.networking.k8s.io
+          kind: Gateway
+          name: traefik-gateway
+          namespace: gateway
+          sectionName: web
+      hostnames:
+        - "flux.joeckr.dev"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+  # Hardened pod/container security context compliant with Kubernetes restricted PSS.
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  securityContext:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/master"
+      operator: "Exists"
+      effect: "NoSchedule"

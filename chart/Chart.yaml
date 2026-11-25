@@ -1,6 +1,10 @@
 apiVersion: v2
-name: lab-service
-description: Helm chart for experimenting with new services in a lab environment
+name: lab-flux-cd
+description: Helm wrapper chart for Flux Operator and Flux CD with restricted PSS, Longhorn, Traefik Gateway, and Zitadel OIDC
 type: application
 version: 0.2.1
-appVersion: "0.2.1"
+appVersion: "0.63.1"
+dependencies:
+  - name: flux-operator
+    version: "0.63.1"
+    repository: "oci://ghcr.io/controlplaneio-fluxcd/charts"
